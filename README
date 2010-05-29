@@ -1,0 +1,8 @@
+
+ Video4Linux2 adaptor driver for XFree86 v4.0
+
+ Developed by Rob Clark <rob@ti.com> based on xf86-video-v4l driver by
+        Gerd Knorr <kraxel@goldbach.in-berlin.de> and
+	David Woodhouse <David.Woodhouse@mvhi.com>
+
+
