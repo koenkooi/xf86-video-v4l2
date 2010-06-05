@@ -48,7 +48,7 @@
 
 #include <asm/ioctl.h>		/* _IORW(xxx) #defines are here */
 
-#if 1
+#if 0
 # define DEBUG(x) (x)
 #else
 # define DEBUG(x)
@@ -144,6 +144,9 @@ typedef struct _PortPrivRec {
     XF86OffscreenImagePtr       myfmt;    /* which one is YUY2 (packed) */
     int                         yuv_format;
 
+    /* colorkey */
+    CARD32                      colorKey;
+
 } PortPrivRec, *PortPrivPtr;
 
 #define XV_ENCODING	"XV_ENCODING"
@@ -208,6 +211,56 @@ static void V4L2QueryBestSize(ScrnInfoPtr pScrn, Bool motion,
         unsigned int *p_w, unsigned int *p_h, pointer data);
 
 /* ---------------------------------------------------------------------- */
+static void
+V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
+{
+    struct v4l2_framebuffer fbuf;
+
+    /* setup colorkey */
+
+    memset(&fbuf, 0x00, sizeof(fbuf));
+
+    if (-1 == ioctl(V4L2_FD, VIDIOC_G_FBUF, &fbuf)) {
+        perror("ioctl VIDIOC_G_FBUF");
+    }
+
+    DEBUG(xf86Msg(X_INFO, "v4l2: flags=%08x\n", fbuf.flags));
+    DEBUG(xf86Msg(X_INFO, "v4l2: capability=%08x\n", fbuf.capability));
+    DEBUG(xf86Msg(X_INFO, "v4l2: pixelformat=%08x\n", fbuf.fmt.pixelformat));
+
+    if(fbuf.capability & V4L2_FBUF_CAP_CHROMAKEY) {
+        struct v4l2_format format;
+
+        fbuf.flags = V4L2_FBUF_FLAG_OVERLAY | V4L2_FBUF_FLAG_CHROMAKEY;
+        fbuf.fmt.pixelformat = V4L2_PIX_FMT_BGR32;
+
+        /* @todo do we need to keep track of pixelformat?  At a minimum
+         * we could select chromakey or alpha depending on the pixel
+         * format, I think..
+         */
+
+        DEBUG(xf86Msg(X_INFO, "v4l2: enabling chromakey\n"));
+
+        if (-1 == ioctl(V4L2_FD, VIDIOC_S_FBUF, &fbuf)) {
+            perror("ioctl VIDIOC_S_FBUF");
+        }
+
+        memset(&fbuf, 0x00, sizeof(fbuf));
+        format.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
+
+        if (-1 == ioctl(V4L2_FD, VIDIOC_G_FMT, &format)) {
+            perror("ioctl VIDIOC_G_FMT");
+        }
+
+        format.fmt.win.chromakey = pPPriv->colorKey;
+
+        if (-1 == ioctl(V4L2_FD, VIDIOC_S_FMT, &format)) {
+            perror("ioctl VIDIOC_S_FMT");
+        }
+    } else {
+        DEBUG(xf86Msg(X_INFO, "v4l2: NOT enabling chromakey\n"));
+    }
+}
 
 static int
 V4L2OpenDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
@@ -225,6 +278,10 @@ V4L2OpenDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
         DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
                 "Xv/OD width=%d, height=%d, depth=%d\n",
                 pScrn->virtualX, pScrn->virtualY, pScrn->bitsPerPixel));
+
+        if (-1 != V4L2_FD) {
+            V4L2SetupDevice(pPPriv, pScrn);
+        }
     }
 
     if (-1 == V4L2_FD) {
@@ -242,7 +299,7 @@ static void
 V4L2CloseDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 {
     DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/CD: fd=%d\n",V4L2_FD));
+            "Xv/CD: fd=%d\n", V4L2_FD));
     if (-1 != V4L2_FD) {
         close(V4L2_FD);
         V4L2_FD = -1;
@@ -252,22 +309,11 @@ V4L2CloseDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 }
 
 static int
-V4L2PutVideo(ScrnInfoPtr pScrn,
-        short vid_x, short vid_y, short drw_x, short drw_y,
-        short vid_w, short vid_h, short drw_w, short drw_h,
-        RegionPtr clipBoxes, pointer data, DrawablePtr pDraw)
+V4L2UpdateOverlay(PortPrivPtr pPPriv, ScrnInfoPtr pScrn,
+        short drw_x, short drw_y, short drw_w, short drw_h,
+        RegionPtr clipBoxes, DrawablePtr pDraw)
 {
-    PortPrivPtr pPPriv = (PortPrivPtr) data;
     struct v4l2_format format;
-
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PV vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d\n",
-            vid_x, vid_y, vid_w, vid_h));
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PV drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d\n",
-            drw_x, drw_y, drw_w, drw_h));
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "pPPriv=%p\n", pPPriv));
 
     /* @todo check if x/y w/h has actually changed to avoid unnecessary ioctl
      */
@@ -276,23 +322,52 @@ V4L2PutVideo(ScrnInfoPtr pScrn,
     if (V4L2OpenDevice(pPPriv, pScrn))
         return Success;
 
-    memset(&format, 0x00, sizeof(struct v4l2_format));
+    memset(&format, 0x00, sizeof(format));
     format.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
 
     if (-1 == ioctl(V4L2_FD, VIDIOC_G_FMT, &format)) {
         perror("ioctl VIDIOC_G_FMT");
     }
 
+    format.fmt.win.chromakey = pPPriv->colorKey;
+
     format.fmt.win.w.top = drw_y;
     format.fmt.win.w.left = drw_x;
-//    format.fmt.win.w.width = drw_w;
-//    format.fmt.win.w.height = drw_h;
+
+    if (drw_w != -1) {
+        format.fmt.win.w.width = drw_w;
+    }
+    if (drw_h != -1) {
+        format.fmt.win.w.height = drw_h;
+    }
 
     if (-1 == ioctl(V4L2_FD, VIDIOC_S_FMT, &format)) {
         perror("ioctl VIDIOC_S_FMT");
     }
 
+    xf86XVFillKeyHelper(pDraw->pScreen, pPPriv->colorKey, clipBoxes);
+
     return Success;
+}
+
+static int
+V4L2PutVideo(ScrnInfoPtr pScrn,
+        short vid_x, short vid_y, short drw_x, short drw_y,
+        short vid_w, short vid_h, short drw_w, short drw_h,
+        RegionPtr clipBoxes, pointer data, DrawablePtr pDraw)
+{
+    PortPrivPtr pPPriv = (PortPrivPtr) data;
+
+    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
+            "Xv/PV vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d\n",
+            vid_x, vid_y, vid_w, vid_h));
+    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
+            "Xv/PV drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d\n",
+            drw_x, drw_y, drw_w, drw_h));
+
+    return V4L2UpdateOverlay(pPPriv, pScrn,
+            drw_x, drw_y, drw_w, drw_h,
+            clipBoxes, pDraw);
 }
 
 static int
@@ -301,6 +376,8 @@ V4L2PutStill(ScrnInfoPtr pScrn,
         short vid_w, short vid_h, short drw_w, short drw_h,
         RegionPtr clipBoxes, pointer data, DrawablePtr pDraw)
 {
+    PortPrivPtr pPPriv = (PortPrivPtr) data;
+
     DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
             "Xv/PS vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d\n",
             vid_x, vid_y, vid_w, vid_h));
@@ -308,8 +385,23 @@ V4L2PutStill(ScrnInfoPtr pScrn,
             "Xv/PS drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d\n",
             drw_x, drw_y, drw_w, drw_h));
 
-    /* FIXME */
-    return Success;
+    return V4L2UpdateOverlay(pPPriv, pScrn,
+            drw_x, drw_y, drw_w, drw_h,
+            clipBoxes, pDraw);
+}
+
+static int
+V4L2ReputImage(ScrnInfoPtr pScrn, short drw_x, short drw_y,
+        RegionPtr clipBoxes, pointer data, DrawablePtr pDraw )
+{
+    PortPrivPtr pPPriv = (PortPrivPtr) data;
+
+    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
+            "Xv/RI drw_x=%d, drw_y=%d\n", drw_x, drw_y));
+
+    return V4L2UpdateOverlay(pPPriv, pScrn,
+            drw_x, drw_y, -1, -1,
+            clipBoxes, pDraw);
 }
 
 static void
@@ -351,7 +443,7 @@ V4L2SetPortAttribute(ScrnInfoPtr pScrn,
     if (V4L2OpenDevice(pPPriv, pScrn))
         return Success;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/SPA %lu, %d\n",
+    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/SPA %lu, %ld\n",
             attribute, value));
 
     if (-1 == V4L2_FD) {
@@ -383,7 +475,7 @@ V4L2GetPortAttribute(ScrnInfoPtr pScrn,
         ret = BadValue;
     }
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/GPA %lu, %d\n",
+    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/GPA %lu, %ld\n",
             attribute, *value));
 
     V4L2CloseDevice(pPPriv,pScrn);
@@ -440,7 +532,7 @@ v4l2_add_enc(XF86VideoEncodingPtr enc, int i,
 }
 
 static void
-V4L2BuildEncodings(PortPrivPtr p, int fd)
+V4L2BuildEncodings(PortPrivPtr p)
 {
     int entries = 4;
     p->enc = xalloc(sizeof(XF86VideoEncodingRec) * entries);
@@ -495,8 +587,7 @@ v4l2_add_attr(XF86AttributeRec **list, int *count,
 /* setup yuv overlay + hw scaling: look if we find some common video
    format which both v4l2 driver and the X-Server can handle */
 static void
-v4l2_check_yuv(ScrnInfoPtr pScrn, PortPrivPtr pPPriv,
-        char *dev, int fd)
+v4l2_check_yuv(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 {
     static const struct {
         unsigned int  v4l2_palette;
@@ -552,6 +643,8 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         memset(pPPriv,0,sizeof(PortPrivRec));
         pPPriv->nr = d;
 
+        pPPriv->colorKey = 0x0000ff00;   /* @todo make this configurable */
+
         /* check device */
 #if 0 /* @todo */
         if (-1 == ioctl(fd,VIDIOCGCAP,&pPPriv->cap) ||
@@ -563,10 +656,11 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         }
 #endif
         strncpy(V4L2_NAME, dev, 16);
-        V4L2BuildEncodings(pPPriv, fd);
+        V4L2_FD = fd;
+        V4L2BuildEncodings(pPPriv);
         if (NULL == pPPriv->enc)
             return FALSE;
-        v4l2_check_yuv(pScrn, pPPriv, dev, fd);
+        v4l2_check_yuv(pPPriv, pScrn);
 
         /* alloc VideoAdaptorRec */
         VAR = xrealloc(VAR,sizeof(XF86VideoAdaptorPtr)*(i+1));
@@ -591,7 +685,6 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
             }
         }
 
-
         /* hook in private data */
         Private = xalloc(sizeof(DevUnion));
         if (!Private)
@@ -604,10 +697,11 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         /* init VideoAdaptorRec */
         VAR[i]->type  = XvInputMask | XvWindowMask | XvVideoMask;
         VAR[i]->name  = "video4linux2";
-        VAR[i]->flags = VIDEO_INVERT_CLIPLIST;
+        VAR[i]->flags = 0; /*VIDEO_INVERT_CLIPLIST;*/
 
         VAR[i]->PutVideo = V4L2PutVideo;
         VAR[i]->PutStill = V4L2PutStill;
+        VAR[i]->ReputImage = V4L2ReputImage;
         VAR[i]->StopVideo = V4L2StopVideo;
         VAR[i]->SetPortAttribute = V4L2SetPortAttribute;
         VAR[i]->GetPortAttribute = V4L2GetPortAttribute;
@@ -619,10 +713,13 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
                 sizeof(InputVideoFormats) / sizeof(InputVideoFormats[0]);
         VAR[i]->pFormats = InputVideoFormats;
 
-        if (fd != -1) {
-            close(fd);
-            DEBUG(xf86Msg(X_INFO, "v4l2: %s closed ok\n", dev));
-        }
+        /* ensure colorkey is properly configured.. some drivers need this
+         * before STREAMON.. */
+        V4L2SetupDevice(pPPriv, pScrn);
+
+        V4L2CloseDevice(pPPriv, pScrn);
+        DEBUG(xf86Msg(X_INFO, "v4l2: %s closed ok\n", dev));
+
         i++;
     }
 
