@@ -29,5 +29,7 @@ v4l2_drv_la_CFLAGS = @XORG_CFLAGS@
 v4l2_drv_ladir = @moduledir@/drivers
 
 v4l2_drv_la_SOURCES = \
-         v4l2.c
+         v4l2.c \
+         v4l2-alpha.c
+
 

@@ -210,13 +210,16 @@ static void V4L2QueryBestSize(ScrnInfoPtr pScrn, Bool motion,
         short vid_w, short vid_h, short drw_w, short drw_h,
         unsigned int *p_w, unsigned int *p_h, pointer data);
 
+void V4L2SetupAlpha(void);
+void V4L2EnableAlpha(Bool b);
+
 /* ---------------------------------------------------------------------- */
 static void
 V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 {
     struct v4l2_framebuffer fbuf;
 
-    /* setup colorkey */
+    /* setup alpha or colorkey if supported */
 
     memset(&fbuf, 0x00, sizeof(fbuf));
 
@@ -228,24 +231,33 @@ V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
     DEBUG(xf86Msg(X_INFO, "v4l2: capability=%08x\n", fbuf.capability));
     DEBUG(xf86Msg(X_INFO, "v4l2: pixelformat=%08x\n", fbuf.fmt.pixelformat));
 
-    if(fbuf.capability & V4L2_FBUF_CAP_CHROMAKEY) {
+    if(fbuf.capability & (V4L2_FBUF_CAP_CHROMAKEY | V4L2_FBUF_CAP_LOCAL_ALPHA)) {
         struct v4l2_format format;
 
-        fbuf.flags = V4L2_FBUF_FLAG_OVERLAY | V4L2_FBUF_FLAG_CHROMAKEY;
-        fbuf.fmt.pixelformat = V4L2_PIX_FMT_BGR32;
+        fbuf.flags = V4L2_FBUF_FLAG_OVERLAY;
+        fbuf.fmt.pixelformat = V4L2_PIX_FMT_BGR32;  // ???
+
+        /* prefer alpha blending to colorkey, if both are supported: */
+        if(fbuf.capability & V4L2_FBUF_CAP_LOCAL_ALPHA) {
+            xf86Msg(X_INFO, "v4l2: enabling local-alpha for %s\n", V4L2_NAME);
+            fbuf.flags |= V4L2_FBUF_FLAG_LOCAL_ALPHA;
+            pPPriv->colorKey = 0xff000000;
+            V4L2SetupAlpha();
+        } else {
+            xf86Msg(X_INFO, "v4l2: enabling chromakey for %s\n", V4L2_NAME);
+            fbuf.flags |= V4L2_FBUF_FLAG_CHROMAKEY;
+        }
 
         /* @todo do we need to keep track of pixelformat?  At a minimum
          * we could select chromakey or alpha depending on the pixel
          * format, I think..
          */
 
-        DEBUG(xf86Msg(X_INFO, "v4l2: enabling chromakey\n"));
-
         if (-1 == ioctl(V4L2_FD, VIDIOC_S_FBUF, &fbuf)) {
             perror("ioctl VIDIOC_S_FBUF");
         }
 
-        memset(&fbuf, 0x00, sizeof(fbuf));
+        memset(&format, 0x00, sizeof(format));
         format.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
 
         if (-1 == ioctl(V4L2_FD, VIDIOC_G_FMT, &format)) {
@@ -258,7 +270,7 @@ V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
             perror("ioctl VIDIOC_S_FMT");
         }
     } else {
-        DEBUG(xf86Msg(X_INFO, "v4l2: NOT enabling chromakey\n"));
+        xf86Msg(X_INFO, "v4l2: neither chromakey or alpha is supported by %s\n", V4L2_NAME);
     }
 }
 
@@ -345,7 +357,9 @@ V4L2UpdateOverlay(PortPrivPtr pPPriv, ScrnInfoPtr pScrn,
         perror("ioctl VIDIOC_S_FMT");
     }
 
+    V4L2EnableAlpha(TRUE);
     xf86XVFillKeyHelper(pDraw->pScreen, pPPriv->colorKey, clipBoxes);
+    V4L2EnableAlpha(FALSE);
 
     return Success;
 }
@@ -697,7 +711,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         /* init VideoAdaptorRec */
         VAR[i]->type  = XvInputMask | XvWindowMask | XvVideoMask;
         VAR[i]->name  = "video4linux2";
-        VAR[i]->flags = 0; /*VIDEO_INVERT_CLIPLIST;*/
+        VAR[i]->flags = 0;
 
         VAR[i]->PutVideo = V4L2PutVideo;
         VAR[i]->PutStill = V4L2PutStill;
