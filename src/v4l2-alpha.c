@@ -32,6 +32,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <linux/fb.h>
 
 #include "xf86.h"
 #include "xf86_OSproc.h"
@@ -39,9 +40,7 @@
 #include "xf86PciInfo.h"
 #include "xf86fbman.h"
 #include "xf86xv.h"
-//#include <X11/extensions/Xv.h>
 #include "regionstr.h"
-//#include "dgaproc.h"
 #include "xf86str.h"
 #include "gcstruct.h"
 
@@ -220,6 +219,7 @@ static Bool
 V4L2SetupScreen(ScreenPtr pScreen)
 {
     ScreenPrivPtr pScreenPriv = dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey);
+    int fd;
 
     if (dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey))
         return TRUE;
@@ -236,6 +236,26 @@ V4L2SetupScreen(ScreenPtr pScreen)
     wrap (pScreenPriv, pScreen, CreateGC, V4L2CreateGC);
 
     dixSetPrivate(&pScreen->devPrivates, ScreenPrivateKey, pScreenPriv);
+
+    /* configure the corresponding framebuffer for ARGB: */
+    fd = fbdevHWGetFD(xf86Screens[pScreen->myNum]);
+    if (fd) {
+        struct fb_var_screeninfo var;
+
+        DEBUG(xf86Msg(X_INFO, "v4l2: reconfiguring fb dev %d to ARGB..\n", fd));
+
+        if (-1 == ioctl(fd, FBIOGET_VSCREENINFO, &var)) {
+            perror("ioctl FBIOGET_VSCREENINFO");
+        }
+
+        /* @todo support other color formats than ARGB */
+        var.transp.length = 8;
+        var.transp.offset = 24;
+
+        if (-1 == ioctl(fd, FBIOPUT_VSCREENINFO, &var)) {
+            perror("ioctl FBIOPUT_VSCREENINFO");
+        }
+    }
 
     return TRUE;
 }

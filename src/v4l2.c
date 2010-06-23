@@ -33,8 +33,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
-
 #include <linux/videodev2.h>
+
 #include "xf86.h"
 #include "xf86_OSproc.h"
 #include "xf86Pci.h"
