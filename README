@@ -1,8 +1,33 @@
 
- Video4Linux2 adaptor driver for XFree86 v4.0
+Video4Linux2 adaptor driver for XFree86 v4.0
 
- Developed by Rob Clark <rob@ti.com> based on xf86-video-v4l driver by
+Developed by Rob Clark <rob@ti.com> based on xf86-video-v4l driver by
         Gerd Knorr <kraxel@goldbach.in-berlin.de> and
-	David Woodhouse <David.Woodhouse@mvhi.com>
+        David Woodhouse <David.Woodhouse@mvhi.com>
 
+Example Configuration:
 
+  # example config with defaults shown:
+  Section "Module"
+      SubSection "v4l2"
+          # Enable more verbose debug output to Xorg log
+          Option "Debug" "off"
+
+          # The devices managed by the v4l2 xv driver should be specified
+          # as a comma separated list of one or more v4l2 device file
+          # paths.  Any character other than comma is interpreted as part
+          # of the filename, so don't include spaces unless it is part of
+          # the filename.
+          # NOTE: devices should be listed in increasing order starting
+          # with the first v4l2 display device.. (I'm not yet sure if it
+          # is possible to lift this restriction somehow.)
+          Option "Devices" "/dev/video1,/dev/video2,/dev/video3"
+
+          # Use alpha blending to composite video, if supported by device
+          Option "Alpha" "on"
+
+          # The color-key value to use, if alpha blending is not enabled
+          # or not supported by the device
+          Option "ColorKey" "0x0000ff00"
+      EndSubSection
+  EndSection

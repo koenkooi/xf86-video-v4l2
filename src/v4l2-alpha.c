@@ -43,12 +43,7 @@
 #include "regionstr.h"
 #include "xf86str.h"
 #include "gcstruct.h"
-
-#if 0
-# define DEBUG(x) (x)
-#else
-# define DEBUG(x)
-#endif
+#include "v4l2.h"
 
 /* ---------------------------------------------------------------------- */
 /* For alpha blending, we want the alpha channel value to be 1's for 100%

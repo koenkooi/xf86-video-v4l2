@@ -45,14 +45,9 @@
 #include "regionstr.h"
 #include "dgaproc.h"
 #include "xf86str.h"
+#include "v4l2.h"
 
 #include <asm/ioctl.h>		/* _IORW(xxx) #defines are here */
-
-#if 0
-# define DEBUG(x) (x)
-#else
-# define DEBUG(x)
-#endif
 
 static void     V4L2Identify(int flags);
 static Bool     V4L2Probe(DriverPtr drv, int flags);
@@ -66,8 +61,36 @@ _X_EXPORT DriverRec V4L2 = {
         V4L2AvailableOptions,
         NULL,
         0
-};    
+};
 
+/* Supported options */
+typedef enum {
+        OPTION_DEBUG,        /* enable debug */
+        OPTION_DEVICES,      /* comma separated list of v4l2 devices */
+        OPTION_ALPHA,        /* use alpha blending if supported by device */
+        OPTION_COLORKEY,     /* colorkey value to use, if not using alpha */
+        NUM_OPTIONS
+} FBDevOpts;
+
+#define DEFAULT_DEBUG        FALSE
+#define DEFAULT_DEVICES      "/dev/video1,/dev/video2,/dev/video3"
+#define DEFAULT_ALPHA        TRUE
+#define DEFAULT_COLORKEY     0x0000ff00
+
+static const OptionInfoRec V4L2DevOptions[] = {
+        { OPTION_DEBUG,         "Debug",        OPTV_BOOLEAN,   {0},  FALSE },
+        { OPTION_DEVICES,       "Devices",      OPTV_STRING,    {0},  FALSE },
+        { OPTION_ALPHA,         "Alpha",        OPTV_BOOLEAN,   {0},  FALSE },
+        { OPTION_COLORKEY,      "ColorKey",     OPTV_INTEGER,   {0},  FALSE },
+        { -1,                   NULL,           OPTV_NONE,      {0},  FALSE }
+};
+
+V4L2Config config = {
+        .debug     = DEFAULT_DEBUG,
+        .devices   = DEFAULT_DEVICES,
+        .alpha     = DEFAULT_ALPHA,
+        .colorKey  = DEFAULT_COLORKEY
+};
 
 #ifdef XFree86LOADER
 
@@ -113,6 +136,24 @@ v4l2Setup(pointer module, pointer opts, int *errmaj, int *errmin)
         return NULL;
     } else {
         /* OK */
+        OptionInfoPtr options;
+
+        /* handle options */
+        if (!(options = xalloc(sizeof(V4L2DevOptions)))) {
+            return FALSE;
+        }
+
+        memcpy(options, V4L2DevOptions, sizeof(V4L2DevOptions));
+        xf86ProcessOptions(0 /*XXX pScrn->scrnIndex */, opts, options);
+
+        config.debug = xf86ReturnOptValBool(options, OPTION_DEBUG, DEFAULT_DEBUG);
+        if (!(config.devices = xf86GetOptValString(options, OPTION_DEVICES))) {
+            config.devices = DEFAULT_DEVICES;
+        }
+        config.alpha = xf86ReturnOptValBool(options, OPTION_ALPHA, DEFAULT_ALPHA);
+        if (!xf86GetOptValInteger(options, OPTION_COLORKEY, (int *)&config.colorKey)) {
+            config.colorKey = DEFAULT_COLORKEY;
+        }
 
         xf86AddDriver (&V4L2, module, 0);
 
@@ -188,20 +229,13 @@ static const XF86AttributeRec MuteAttr =
 static const XF86AttributeRec FreqAttr = 
 {XvSettable | XvGettable,     0, 16*1000, XV_FREQ};
 
-
-#define MAX_V4L2_DEVICES 4
 #define V4L2_FD   (v4l2_devices[pPPriv->nr].fd)
 #define V4L2_NAME (v4l2_devices[pPPriv->nr].devName)
 
 static struct V4L2_DEVICE {
     int  fd;
-    char devName[16];
-} v4l2_devices[MAX_V4L2_DEVICES] = {
-        { -1 },
-        { -1 },
-        { -1 },
-        { -1 },
-};
+    char *devName;
+} *v4l2_devices = NULL;
 
 /* ---------------------------------------------------------------------- */
 /* forward decl */
@@ -209,9 +243,6 @@ static struct V4L2_DEVICE {
 static void V4L2QueryBestSize(ScrnInfoPtr pScrn, Bool motion,
         short vid_w, short vid_h, short drw_w, short drw_h,
         unsigned int *p_w, unsigned int *p_h, pointer data);
-
-void V4L2SetupAlpha(void);
-void V4L2EnableAlpha(Bool b);
 
 /* ---------------------------------------------------------------------- */
 static void
@@ -238,7 +269,7 @@ V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
         fbuf.fmt.pixelformat = V4L2_PIX_FMT_BGR32;  // ???
 
         /* prefer alpha blending to colorkey, if both are supported: */
-        if(fbuf.capability & V4L2_FBUF_CAP_LOCAL_ALPHA) {
+        if(config.alpha && (fbuf.capability & V4L2_FBUF_CAP_LOCAL_ALPHA)) {
             xf86Msg(X_INFO, "v4l2: enabling local-alpha for %s\n", V4L2_NAME);
             fbuf.flags |= V4L2_FBUF_FLAG_LOCAL_ALPHA;
             pPPriv->colorKey = 0xff000000;
@@ -520,7 +551,7 @@ V4L2QueryBestSize(ScrnInfoPtr pScrn, Bool motion,
 static const OptionInfoRec *
 V4L2AvailableOptions(int chipid, int busid)
 {
-    return NULL;
+    return V4L2DevOptions;
 }
 
 static void
@@ -631,22 +662,20 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
     PortPrivPtr pPPriv;
     DevUnion *Private;
     XF86VideoAdaptorPtr *VAR = NULL;
-    char dev[18];
-    int  fd,i,j,d;
+    char *dev, *devices;
+    int  fd,i,j;
+
+    /* we need devices to be a mutable string that we own */
+    devices = strdup(config.devices);
 
     DEBUG(xf86Msg(X_INFO, "v4l2: init start\n"));
 
-    for (i = 0, d = 0; d < MAX_V4L2_DEVICES; d++) {
-        DEBUG(xf86Msg(X_INFO, "v4l2: i=%d, d=%d\n", i, d));
-        sprintf(dev, "/dev/video%d", d);
+    for (i = 0; dev = strsep(&devices, ","); ) {
         fd = open(dev, O_RDWR, 0);
         DEBUG(xf86Msg(X_INFO, "v4l2: open %s -> %d\n", dev, fd));
         if (fd == -1) {
-            sprintf(dev, "/dev/v4l2/video%d", d);
-            DEBUG(xf86Msg(X_INFO, "v4l2: open %s -> %d\n", dev, fd));
-            fd = open(dev, O_RDWR, 0);
-            if (fd == -1)
-                continue;
+            xf86Msg(X_INFO, "v4l2: could not open '%s'.. skipping\n", dev);
+            continue;
         }
         DEBUG(xf86Msg(X_INFO, "v4l2: %s open ok\n", dev));
 
@@ -655,21 +684,25 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         if (!pPPriv)
             return FALSE;
         memset(pPPriv,0,sizeof(PortPrivRec));
-        pPPriv->nr = d;
+        pPPriv->nr = i;
 
-        pPPriv->colorKey = 0x0000ff00;   /* @todo make this configurable */
+        pPPriv->colorKey = config.colorKey;
 
         /* check device */
 #if 0 /* @todo */
         if (-1 == ioctl(fd,VIDIOCGCAP,&pPPriv->cap) ||
                 0 == (pPPriv->cap.type & VID_TYPE_OVERLAY)) {
-            DEBUG(xf86Msg(X_INFO,  "v4l2: %s: no overlay support\n",dev));
+            DEBUG(xf86Msg(X_INFO, "v4l2: %s: no overlay support\n", dev));
             xfree(pPPriv);
             close(fd);
             continue;
         }
 #endif
-        strncpy(V4L2_NAME, dev, 16);
+
+        /* grow array of devices */
+        v4l2_devices = xrealloc(v4l2_devices, sizeof(v4l2_devices[0]) * (i + 1));
+
+        V4L2_NAME = dev;
         V4L2_FD = fd;
         V4L2BuildEncodings(pPPriv);
         if (NULL == pPPriv->enc)
