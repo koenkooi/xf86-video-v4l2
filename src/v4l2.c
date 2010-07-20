@@ -258,9 +258,9 @@ V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
         perror("ioctl VIDIOC_G_FBUF");
     }
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: flags=%08x\n", fbuf.flags));
-    DEBUG(xf86Msg(X_INFO, "v4l2: capability=%08x\n", fbuf.capability));
-    DEBUG(xf86Msg(X_INFO, "v4l2: pixelformat=%08x\n", fbuf.fmt.pixelformat));
+    DEBUG("flags=%08x", fbuf.flags);
+    DEBUG("capability=%08x", fbuf.capability);
+    DEBUG("pixelformat=%08x", fbuf.fmt.pixelformat);
 
     if(fbuf.capability & (V4L2_FBUF_CAP_CHROMAKEY | V4L2_FBUF_CAP_LOCAL_ALPHA)) {
         struct v4l2_format format;
@@ -318,9 +318,8 @@ V4L2OpenDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
             xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
                     "v4l2: memPhysBase=0x%lx\n", pScrn->memPhysBase);
         }
-        DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-                "Xv/OD width=%d, height=%d, depth=%d\n",
-                pScrn->virtualX, pScrn->virtualY, pScrn->bitsPerPixel));
+        DEBUG("Xv/OD width=%d, height=%d, depth=%d",
+                pScrn->virtualX, pScrn->virtualY, pScrn->bitsPerPixel);
 
         if (-1 != V4L2_FD) {
             V4L2SetupDevice(pPPriv, pScrn);
@@ -328,12 +327,11 @@ V4L2OpenDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
     }
 
     if (-1 == V4L2_FD) {
-        DEBUG(xf86Msg(X_INFO, "v4l2: failed to open device\n"));
+        DEBUG("failed to open device");
         return errno;
     }
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/OD: fd=%d\n",V4L2_FD));
+    DEBUG("Xv/OD: fd=%d",V4L2_FD);
 
     return 0;
 }
@@ -341,13 +339,11 @@ V4L2OpenDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 static void
 V4L2CloseDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 {
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/CD: fd=%d\n", V4L2_FD));
+    DEBUG("Xv/CD: fd=%d", V4L2_FD);
     if (-1 != V4L2_FD) {
         close(V4L2_FD);
         V4L2_FD = -1;
-        DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-                "Xv/CD: device is closed\n"));
+        DEBUG("Xv/CD: device is closed");
     }
 }
 
@@ -403,12 +399,10 @@ V4L2PutVideo(ScrnInfoPtr pScrn,
 {
     PortPrivPtr pPPriv = (PortPrivPtr) data;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PV vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d\n",
-            vid_x, vid_y, vid_w, vid_h));
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PV drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d\n",
-            drw_x, drw_y, drw_w, drw_h));
+    DEBUG("Xv/PV vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d",
+            vid_x, vid_y, vid_w, vid_h);
+    DEBUG("Xv/PV drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d",
+            drw_x, drw_y, drw_w, drw_h);
 
     return V4L2UpdateOverlay(pPPriv, pScrn,
             drw_x, drw_y, drw_w, drw_h,
@@ -423,12 +417,10 @@ V4L2PutStill(ScrnInfoPtr pScrn,
 {
     PortPrivPtr pPPriv = (PortPrivPtr) data;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PS vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d\n",
-            vid_x, vid_y, vid_w, vid_h));
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/PS drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d\n",
-            drw_x, drw_y, drw_w, drw_h));
+    DEBUG("Xv/PS vid_x=%d, vid_y=%d, vid_w=%d, vid_h=%d",
+            vid_x, vid_y, vid_w, vid_h);
+    DEBUG("Xv/PS drw_x=%d, drw_y=%d, drw_w=%d, drw_h=%d",
+            drw_x, drw_y, drw_w, drw_h);
 
     return V4L2UpdateOverlay(pPPriv, pScrn,
             drw_x, drw_y, drw_w, drw_h,
@@ -441,8 +433,7 @@ V4L2ReputImage(ScrnInfoPtr pScrn, short drw_x, short drw_y,
 {
     PortPrivPtr pPPriv = (PortPrivPtr) data;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2,
-            "Xv/RI drw_x=%d, drw_y=%d\n", drw_x, drw_y));
+    DEBUG("Xv/RI drw_x=%d, drw_y=%d", drw_x, drw_y);
 
     return V4L2UpdateOverlay(pPPriv, pScrn,
             drw_x, drw_y, -1, -1,
@@ -454,7 +445,7 @@ V4L2StopVideo(ScrnInfoPtr pScrn, pointer data, Bool shutdown)
 {
     PortPrivPtr pPPriv = (PortPrivPtr) data;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/StopVideo shutdown=%d\n",shutdown));
+    DEBUG("Xv/StopVideo shutdown=%d",shutdown);
 
     if (shutdown) {
         V4L2CloseDevice(pPPriv, pScrn);
@@ -488,8 +479,7 @@ V4L2SetPortAttribute(ScrnInfoPtr pScrn,
     if (V4L2OpenDevice(pPPriv, pScrn))
         return Success;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/SPA %lu, %ld\n",
-            attribute, value));
+    DEBUG("Xv/SPA %lu, %ld", attribute, value);
 
     if (-1 == V4L2_FD) {
         ret = Success;
@@ -511,8 +501,7 @@ V4L2GetPortAttribute(ScrnInfoPtr pScrn,
     if (V4L2OpenDevice(pPPriv, pScrn))
         return Success;
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/GPA %lu\n",
-            attribute));
+    DEBUG("Xv/GPA %lu", attribute);
 
     if (-1 == V4L2_FD) {
         ret = Success;
@@ -520,8 +509,7 @@ V4L2GetPortAttribute(ScrnInfoPtr pScrn,
         ret = BadValue;
     }
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/GPA %lu, %ld\n",
-            attribute, *value));
+    DEBUG("Xv/GPA %lu, %ld", attribute, *value);
 
     V4L2CloseDevice(pPPriv,pScrn);
     return ret;
@@ -544,8 +532,7 @@ V4L2QueryBestSize(ScrnInfoPtr pScrn, Bool motion,
         *p_h = (drw_h < maxy) ? drw_h : maxy;
     }
 
-    DEBUG(xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 2, "Xv/BS %d %dx%d %dx%d\n",
-            pPPriv->cenc,drw_w,drw_h,*p_w,*p_h));
+    DEBUG("Xv/BS %d %dx%d %dx%d", pPPriv->cenc,drw_w,drw_h,*p_w,*p_h);
 }
 
 static const OptionInfoRec *
@@ -612,12 +599,12 @@ v4l2_add_attr(XF86AttributeRec **list, int *count,
 
     for (i = 0; i < *count; i++) {
         if (0 == strcmp((*list)[i].name,attr->name)) {
-            DEBUG(xf86Msg(X_INFO, "v4l2: skip dup attr %s\n",attr->name));
+            DEBUG("skip dup attr %s",attr->name);
             return;
         }
     }
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: add attr %s\n",attr->name));
+    DEBUG("add attr %s",attr->name);
     *list = xalloc((*count + 1) * sizeof(XF86AttributeRec));
     if (NULL == *list) {
         *count = 0;
@@ -649,10 +636,10 @@ v4l2_check_yuv(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
     int fmt,i;
 
     pPPriv->format = xf86XVQueryOffscreenImages(pScreen,&pPPriv->nformat);
-    DEBUG(xf86Msg(X_INFO, "nformat=%d\n", pPPriv->nformat));
+    DEBUG("nformat=%d", pPPriv->nformat);
     for (i = 0; i < pPPriv->nformat; i++) {
-        DEBUG(xf86Msg(X_INFO, "format[i].image->id=%08x\n", i, pPPriv->format[i].image->id));
-        DEBUG(xf86Msg(X_INFO, "format[i].image->format=%d\n", i, pPPriv->format[i].image->format));
+        DEBUG("format[i].image->id=%08x", i, pPPriv->format[i].image->id);
+        DEBUG("format[i].image->format=%d", i, pPPriv->format[i].image->format);
     }
 }
 
@@ -668,16 +655,16 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
     /* we need devices to be a mutable string that we own */
     devices = strdup(config.devices);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: init start\n"));
+    DEBUG("init start");
 
     for (i = 0; dev = strsep(&devices, ","); ) {
         fd = open(dev, O_RDWR, 0);
-        DEBUG(xf86Msg(X_INFO, "v4l2: open %s -> %d\n", dev, fd));
+        DEBUG("open %s -> %d", dev, fd);
         if (fd == -1) {
             xf86Msg(X_INFO, "v4l2: could not open '%s'.. skipping\n", dev);
             continue;
         }
-        DEBUG(xf86Msg(X_INFO, "v4l2: %s open ok\n", dev));
+        DEBUG("%s open ok", dev);
 
         /* our private data */
         pPPriv = xalloc(sizeof(PortPrivRec));
@@ -692,7 +679,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
 #if 0 /* @todo */
         if (-1 == ioctl(fd,VIDIOCGCAP,&pPPriv->cap) ||
                 0 == (pPPriv->cap.type & VID_TYPE_OVERLAY)) {
-            DEBUG(xf86Msg(X_INFO, "v4l2: %s: no overlay support\n", dev));
+            DEBUG("%s: no overlay support", dev);
             xfree(pPPriv);
             close(fd);
             continue;
@@ -765,7 +752,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         V4L2SetupDevice(pPPriv, pScrn);
 
         V4L2CloseDevice(pPPriv, pScrn);
-        DEBUG(xf86Msg(X_INFO, "v4l2: %s closed ok\n", dev));
+        DEBUG("%s closed ok", dev);
 
         i++;
     }
@@ -780,7 +767,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
     xvMute       = MAKE_ATOM(XV_MUTE);
     xvVolume     = MAKE_ATOM(XV_VOLUME);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: init done, %d device(s) found\n",i));
+    DEBUG("init done, %d device(s) found",i);
 
     *adaptors = VAR;
     return i;
@@ -789,7 +776,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
 static Bool
 V4L2Probe(DriverPtr drv, int flags)
 {
-    DEBUG(xf86Msg(X_INFO, "v4l2: probe, flags=%08x\n", flags));
+    DEBUG("probe, flags=%08x", flags);
 
     if (flags & PROBE_DETECT)
         return TRUE;

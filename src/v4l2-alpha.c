@@ -99,7 +99,7 @@ V4L2ValidateGC(GCPtr pGC, unsigned long changes, DrawablePtr pDrawable)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: ValidateGC\n"));
+    DEBUG("ValidateGC");
 
     unwrap (pGCPriv, pGC, funcs);
     (*pGC->funcs->ValidateGC)(pGC, changes, pDrawable);
@@ -111,7 +111,7 @@ V4L2ChangeGC(GCPtr pGC, unsigned long mask)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: ChangeGC\n"));
+    DEBUG("ChangeGC");
 
     if (enable_alpha) {
         pGC->fgPixel = pGC->fgPixel & 0x00ffffff;
@@ -131,7 +131,7 @@ V4L2CopyGC(GCPtr pGCSrc, unsigned long mask, GCPtr pGCDst)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGCDst->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: CopyGC\n"));
+    DEBUG("CopyGC");
 
     unwrap (pGCPriv, pGCDst, funcs);
     (*pGCDst->funcs->CopyGC) (pGCSrc, mask, pGCDst);
@@ -143,7 +143,7 @@ V4L2DestroyGC(GCPtr pGC)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: DestroyGC\n"));
+    DEBUG("DestroyGC");
 
     unwrap (pGCPriv, pGC, funcs);
     (*pGC->funcs->DestroyGC)(pGC);
@@ -155,7 +155,7 @@ V4L2ChangeClip (GCPtr pGC, int type, pointer pvalue, int nrects)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: ChangeClip\n"));
+    DEBUG("ChangeClip");
 
     unwrap (pGCPriv, pGC, funcs);
     (*pGC->funcs->ChangeClip) (pGC, type, pvalue, nrects);
@@ -167,7 +167,7 @@ V4L2DestroyClip(GCPtr pGC)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: DestroyClip\n"));
+    DEBUG("DestroyClip");
 
     unwrap (pGCPriv, pGC, funcs);
     (*pGC->funcs->DestroyClip)(pGC);
@@ -179,7 +179,7 @@ V4L2CopyClip(GCPtr pgcDst, GCPtr pgcSrc)
 {
     GCPrivPtr pGCPriv = dixLookupPrivate(&pgcDst->devPrivates, GCPrivateKey);
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: CopyClip\n"));
+    DEBUG("CopyClip");
 
     unwrap (pGCPriv, pgcDst, funcs);
     (*pgcDst->funcs->CopyClip)(pgcDst, pgcSrc);
@@ -197,12 +197,12 @@ V4L2CreateGC(GCPtr pGC)
     GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
     Bool ret;
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: CreateGC\n"));
+    DEBUG("CreateGC");
 
     unwrap (pScreenPriv, pScreen, CreateGC);
     if((ret = (*pScreen->CreateGC) (pGC)) &&
             (pGC->funcs->ChangeGC != V4L2ChangeGC)) {
-        DEBUG(xf86Msg(X_INFO, "v4l2: override ChangeGC..\n"));
+        DEBUG("override ChangeGC..");
         wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
     }
     wrap(pScreenPriv, pScreen, CreateGC, V4L2CreateGC);
@@ -222,7 +222,7 @@ V4L2SetupScreen(ScreenPtr pScreen)
     if (!dixRequestPrivate(GCPrivateKey, sizeof(GCPrivRec)))
         return FALSE;
 
-    DEBUG(xf86Msg(X_INFO, "v4l2: SetupScreen\n"));
+    DEBUG("SetupScreen");
 
     pScreenPriv = malloc(sizeof (ScreenPrivRec));
     if (!pScreenPriv)
@@ -237,7 +237,7 @@ V4L2SetupScreen(ScreenPtr pScreen)
     if (fd) {
         struct fb_var_screeninfo var;
 
-        DEBUG(xf86Msg(X_INFO, "v4l2: reconfiguring fb dev %d to ARGB..\n", fd));
+        DEBUG("reconfiguring fb dev %d to ARGB..", fd);
 
         if (-1 == ioctl(fd, FBIOGET_VSCREENINFO, &var)) {
             perror("ioctl FBIOGET_VSCREENINFO");

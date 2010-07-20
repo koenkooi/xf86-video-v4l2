@@ -17,7 +17,10 @@ typedef struct {
 
 extern V4L2Config config;
 
-#define DEBUG(x) if (config.debug) (x)
+#define DEBUG(fmt, ...) do {                                         \
+    if (config.debug)                                                \
+        xf86Msg(X_INFO, "v4l2: "fmt"\n", ##__VA_ARGS__);             \
+    } while (0)
 
 /* used when alpha blending is enabled */
 void V4L2SetupAlpha(void);
