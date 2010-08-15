@@ -139,7 +139,7 @@ v4l2Setup(pointer module, pointer opts, int *errmaj, int *errmin)
         OptionInfoPtr options;
 
         /* handle options */
-        if (!(options = xalloc(sizeof(V4L2DevOptions)))) {
+        if (!(options = malloc(sizeof(V4L2DevOptions)))) {
             return FALSE;
         }
 
@@ -552,7 +552,7 @@ v4l2_add_enc(XF86VideoEncodingPtr enc, int i,
         int width, int height, int n, int d)
 {
     enc[i].id     = i;
-    enc[i].name   = xalloc(12);
+    enc[i].name   = malloc(12);
     if (NULL == enc[i].name)
         return -1;
     enc[i].width  = width;
@@ -567,7 +567,7 @@ static void
 V4L2BuildEncodings(PortPrivPtr p)
 {
     int entries = 4;
-    p->enc = xalloc(sizeof(XF86VideoEncodingRec) * entries);
+    p->enc = malloc(sizeof(XF86VideoEncodingRec) * entries);
     if (NULL == p->enc)
         goto fail;
     v4l2_add_enc(p->enc, p->nenc++,  320,  240, 1001, 30000);
@@ -578,13 +578,13 @@ V4L2BuildEncodings(PortPrivPtr p)
     return;
 fail:
     if (p->input)
-        xfree(p->input);
+        free(p->input);
     p->input = NULL;
     if (p->norm)
-        xfree(p->norm);
+        free(p->norm);
     p->norm = NULL;
     if (p->enc)
-        xfree(p->enc);
+        free(p->enc);
     p->enc = NULL;
     p->nenc = 0;
 }
@@ -605,7 +605,7 @@ v4l2_add_attr(XF86AttributeRec **list, int *count,
     }
 
     DEBUG("add attr %s",attr->name);
-    *list = xalloc((*count + 1) * sizeof(XF86AttributeRec));
+    *list = malloc((*count + 1) * sizeof(XF86AttributeRec));
     if (NULL == *list) {
         *count = 0;
         return;
@@ -640,6 +640,7 @@ v4l2_check_yuv(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
     for (i = 0; i < pPPriv->nformat; i++) {
         DEBUG("format[i].image->id=%08x", i, pPPriv->format[i].image->id);
         DEBUG("format[i].image->format=%d", i, pPPriv->format[i].image->format);
+        // XXX decide what format we like
     }
 }
 
@@ -667,7 +668,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         DEBUG("%s open ok", dev);
 
         /* our private data */
-        pPPriv = xalloc(sizeof(PortPrivRec));
+        pPPriv = malloc(sizeof(PortPrivRec));
         if (!pPPriv)
             return FALSE;
         memset(pPPriv,0,sizeof(PortPrivRec));
@@ -680,25 +681,25 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         if (-1 == ioctl(fd,VIDIOCGCAP,&pPPriv->cap) ||
                 0 == (pPPriv->cap.type & VID_TYPE_OVERLAY)) {
             DEBUG("%s: no overlay support", dev);
-            xfree(pPPriv);
+            free(pPPriv);
             close(fd);
             continue;
         }
 #endif
 
         /* grow array of devices */
-        v4l2_devices = xrealloc(v4l2_devices, sizeof(v4l2_devices[0]) * (i + 1));
+        v4l2_devices = realloc(v4l2_devices, sizeof(v4l2_devices[0]) * (i + 1));
 
         V4L2_NAME = dev;
         V4L2_FD = fd;
         V4L2BuildEncodings(pPPriv);
-        if (NULL == pPPriv->enc)
+        if (!pPPriv->enc)
             return FALSE;
         v4l2_check_yuv(pPPriv, pScrn);
 
         /* alloc VideoAdaptorRec */
-        VAR = xrealloc(VAR,sizeof(XF86VideoAdaptorPtr)*(i+1));
-        VAR[i] = xalloc(sizeof(XF86VideoAdaptorRec));
+        VAR = realloc(VAR,sizeof(XF86VideoAdaptorPtr)*(i+1));
+        VAR[i] = malloc(sizeof(XF86VideoAdaptorRec));
         if (!VAR[i])
             return FALSE;
         memset(VAR[i],0,sizeof(XF86VideoAdaptorRec));
@@ -720,7 +721,7 @@ V4L2Init(ScrnInfoPtr pScrn, XF86VideoAdaptorPtr **adaptors)
         }
 
         /* hook in private data */
-        Private = xalloc(sizeof(DevUnion));
+        Private = malloc(sizeof(DevUnion));
         if (!Private)
             return FALSE;
         memset(Private,0,sizeof(DevUnion));
