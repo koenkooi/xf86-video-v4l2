@@ -621,6 +621,11 @@ v4l2_add_attr(XF86AttributeRec **list, int *count,
 static void
 v4l2_check_yuv(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
 {
+#if 0
+    /* note: xf86XVQueryOffscreenImages() seems broken after devPrivates
+     * API changes in xorg-server-1.8.99.901.. but support for negotiating
+     * formats is not complete and not really needed, so disabling for now
+     */
     static const struct {
         unsigned int  v4l2_palette;
         unsigned int  v4l2_depth;
@@ -642,6 +647,7 @@ v4l2_check_yuv(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
         DEBUG("format[i].image->format=%d", i, pPPriv->format[i].image->format);
         // XXX decide what format we like
     }
+#endif
 }
 
 static int

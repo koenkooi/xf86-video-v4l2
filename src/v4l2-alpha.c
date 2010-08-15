@@ -63,10 +63,10 @@ static Bool enable_alpha = FALSE;
     real->mem = priv->mem; \
 } while(0)
 
-static int GCPrivateKeyIndex;
-static DevPrivateKey GCPrivateKey = &GCPrivateKeyIndex;
-static int ScreenPrivateKeyIndex;
-static DevPrivateKey ScreenPrivateKey = &ScreenPrivateKeyIndex;
+static DevPrivateKeyRec      GCPrivateKeyRec;
+#define GCPrivateKey         ((DevPrivateKey)(&GCPrivateKeyRec))
+static DevPrivateKeyRec      ScreenPrivateKeyRec;
+#define ScreenPrivateKey     ((DevPrivateKey)(&ScreenPrivateKeyRec))
 
 typedef struct {
     CreateGCProcPtr CreateGC;
@@ -216,21 +216,9 @@ V4L2SetupScreen(ScreenPtr pScreen)
     ScreenPrivPtr pScreenPriv = dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey);
     int fd;
 
-    if (dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey))
-        return TRUE;
-
-    if (!dixRequestPrivate(GCPrivateKey, sizeof(GCPrivRec)))
-        return FALSE;
-
-    DEBUG("SetupScreen");
-
-    pScreenPriv = malloc(sizeof (ScreenPrivRec));
-    if (!pScreenPriv)
-        return FALSE;
+    DEBUG("SetupScreen, pScreenPriv=%p", pScreenPriv);
 
     wrap (pScreenPriv, pScreen, CreateGC, V4L2CreateGC);
-
-    dixSetPrivate(&pScreen->devPrivates, ScreenPrivateKey, pScreenPriv);
 
     /* configure the corresponding framebuffer for ARGB: */
     fd = fbdevHWGetFD(xf86Screens[pScreen->myNum]);
@@ -264,6 +252,9 @@ V4L2SetupAlpha(void)
     if (initialized) {
         return;
     }
+
+    dixRegisterPrivateKey(ScreenPrivateKey, PRIVATE_SCREEN, sizeof(ScreenPrivRec));
+    dixRegisterPrivateKey(GCPrivateKey, PRIVATE_GC, sizeof(GCPrivRec));
 
     for (i = 0; i < screenInfo.numScreens; i++) {
         V4L2SetupScreen(screenInfo.screens[i]);
