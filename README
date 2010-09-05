@@ -24,6 +24,7 @@ Example Configuration:
           Option "Devices" "/dev/video1,/dev/video2,/dev/video3"
 
           # Use alpha blending to composite video, if supported by device
+          # (requires shadow buffer to not be disabled)
           Option "Alpha" "on"
 
           # The color-key value to use, if alpha blending is not enabled

@@ -41,184 +41,240 @@
 #include "xf86fbman.h"
 #include "xf86xv.h"
 #include "regionstr.h"
+#include "inputstr.h"
+#include "mipointrst.h"
 #include "xf86str.h"
 #include "gcstruct.h"
+#include "shadow.h"
+#include "fb.h"
 #include "v4l2.h"
+
+static Bool alpha = FALSE;
+
+/* track the clip associated with each xv port indexed by pPPriv->nr
+ */
+static struct {
+    RegionPtr clip;
+    Bool updated;
+} * regions = NULL;
+
+static int numRegions = 0;
+static int activeClips = 0;
 
 /* ---------------------------------------------------------------------- */
 /* For alpha blending, we want the alpha channel value to be 1's for 100%
  * opaque (the normal case for the rest of the UI).  But we want to be able
  * to ourselves set it to 0's where the video should show through.  For
- * that we need to overload...
+ * that we need to overload the function that blits from the shadow
+ * framebuffer to framebuffer.
  */
 
-static Bool enable_alpha = FALSE;
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
-#define wrap(priv, real, mem, func) do {\
-    priv->mem = real->mem; \
-    real->mem = func; \
-} while(0)
+#define MIPOINTER(dev) \
+    (miPointerPtr)dixLookupPrivate(&(dev)->devPrivates, miPointerPrivKey)
+#define DevHasCursor(pDev) \
+    ((pDev)->spriteInfo && (pDev)->spriteInfo->spriteOwner)
 
-#define unwrap(priv, real, mem) {\
-    real->mem = priv->mem; \
-} while(0)
+static const void *opTransparent=(void *)1, *opSolid=(void *)3;
 
-static DevPrivateKeyRec      GCPrivateKeyRec;
-#define GCPrivateKey         ((DevPrivateKey)(&GCPrivateKeyRec))
-static DevPrivateKeyRec      ScreenPrivateKeyRec;
-#define ScreenPrivateKey     ((DevPrivateKey)(&ScreenPrivateKeyRec))
-
-typedef struct {
-    CreateGCProcPtr CreateGC;
-} ScreenPrivRec, *ScreenPrivPtr;
-
-typedef struct {
-//    void (*ChangeGC)(GCPtr pGC, unsigned long mask);
-    GCFuncs *funcs;
-} GCPrivRec, *GCPrivPtr;
-
-
-/* ---------------------------------------------------------------------- */
-/* GC funcs */
-
-static void V4L2ValidateGC(GCPtr pGC, unsigned long changes, DrawablePtr pDrawable);
-static void V4L2ChangeGC(GCPtr pGC, unsigned long mask);
-static void V4L2CopyGC(GCPtr pGCSrc, unsigned long mask, GCPtr pGCDst);
-static void V4L2DestroyGC(GCPtr pGC);
-static void V4L2ChangeClip (GCPtr pGC, int type, pointer pvalue, int nrects);
-static void V4L2DestroyClip(GCPtr pGC);
-static void V4L2CopyClip(GCPtr pgcDst, GCPtr pgcSrc);
-
-static GCFuncs V4L2GCfuncs = {
-    V4L2ValidateGC, V4L2ChangeGC, V4L2CopyGC, V4L2DestroyGC,
-    V4L2ChangeClip, V4L2DestroyClip, V4L2CopyClip
-};
-
-static void
-V4L2ValidateGC(GCPtr pGC, unsigned long changes, DrawablePtr pDrawable)
+static inline void
+V4L2ShadowBlitTransparentARGB32(void *winBase, int winStride, int w, int h)
 {
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
-
-    DEBUG("ValidateGC");
-
-    unwrap (pGCPriv, pGC, funcs);
-    (*pGC->funcs->ValidateGC)(pGC, changes, pDrawable);
-    wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
+    while (h--) {
+        memset (winBase, 0x00, w * sizeof(FbBits));
+        winBase += winStride;
+    }
 }
 
-static void
-V4L2ChangeGC(GCPtr pGC, unsigned long mask)
+static inline void
+V4L2ShadowBlitSolidARGB32(void *winBase, int winStride,
+        void *shaBase, int shaStride, int w, int h)
 {
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
+    while (h--) {
+        FbBits *win = winBase;
+        FbBits *sha = shaBase;
+        int i = w;
+        while (i--)
+            *win++ = 0xff000000 | *sha++;
+        winBase += winStride;
+        shaBase += shaStride;
+    }
+}
 
-    DEBUG("ChangeGC");
+static inline void
+V4L2ShadowBlitCursorARGB32(void *winBase, int winStride,
+        void *curBase, int curStride, int w, int h)
+{
+    while (h--) {
+        memcpy(winBase, curBase, w * sizeof(FbBits));
+        winBase += winStride;
+        curBase += curStride;
+    }
+}
 
-    if (enable_alpha) {
-        pGC->fgPixel = pGC->fgPixel & 0x00ffffff;
-        pGC->bgPixel = pGC->bgPixel & 0x00ffffff;
+static inline void
+V4l2ShadowBlit(void *winBase, int winStride,
+        void *shaBase, int shaStride, int shaBpp,
+        BoxPtr pbox, const void *op)
+{
+    int w, h;
+
+    w = (pbox->x2 - pbox->x1) * shaBpp / 32;     /* width in words */
+    h = pbox->y2 - pbox->y1;                     /* height in rows */
+
+    if ((w == 0) || (h == 0))
+        return;
+
+    winBase += (winStride * pbox->y1) + (pbox->x1 * shaBpp / 8);
+    shaBase += (shaStride * pbox->y1) + (pbox->x1 * shaBpp / 8);
+
+    if (op == opTransparent) {
+        V4L2ShadowBlitTransparentARGB32(winBase, winStride, w, h);
+    } else if (op == opSolid) {
+        V4L2ShadowBlitSolidARGB32(winBase, winStride, shaBase, shaStride, w, h);
     } else {
-        pGC->fgPixel = pGC->fgPixel | 0xff000000;
-        pGC->bgPixel = pGC->fgPixel | 0xff000000;
+        miPointerPtr pPointer = (miPointerPtr)op;
+        CursorBitsPtr bits = pPointer->pCursor->bits;
+        if (bits->argb) {
+            void *curBase = bits->argb;
+            int curStride = bits->width * sizeof(FbBits);
+            int xoff = MAX(0, pbox->x1 - pPointer->x + bits->xhot);
+            int yoff = MAX(0, pbox->y1 - pPointer->y + bits->yhot);
+            curBase += (yoff * curStride) + (xoff * sizeof(FbBits));
+            V4L2ShadowBlitCursorARGB32(winBase, winStride, curBase, curStride, w, h);
+        } else {
+            // TODO: support non-argb cursors..
+        }
+    }
+}
+
+static inline void
+V4L2ShadowBlitRegions(ScreenPtr pScreen, shadowBufPtr pBuf,
+        RegionPtr damage, const void *op)
+{
+    PixmapPtr pShadow = pBuf->pPixmap;
+    BoxPtr pbox;
+    int nbox, shaBpp, shaXoff, shaYoff;
+    FbBits *shaBase, *winBase;
+    CARD32 shaStride, winStride;
+
+    fbGetDrawable(&pShadow->drawable, shaBase, shaStride, shaBpp, shaXoff, shaYoff);
+    shaStride *= sizeof(FbBits);                 /* convert into byte-stride */
+
+    winBase =
+        pBuf->window(pScreen, 0, 0, SHADOW_WINDOW_WRITE, &winStride, pBuf->closure);
+
+    nbox = RegionNumRects(damage);
+    pbox = RegionRects(damage);
+
+    while (nbox--) {
+        V4l2ShadowBlit(winBase, winStride, shaBase, shaStride, shaBpp, pbox, op);
+        pbox++;
     }
 
-    unwrap (pGCPriv, pGC, funcs);
-    (*pGC->funcs->ChangeGC) (pGC, mask);
-    wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
 }
 
-static void
-V4L2CopyGC(GCPtr pGCSrc, unsigned long mask, GCPtr pGCDst)
+static inline void
+V4L2DrawCursor(ScreenPtr pScreen, shadowBufPtr pBuf, miPointerPtr pPointer)
 {
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGCDst->devPrivates, GCPrivateKey);
+    int i;
+    int x = pPointer->x - pPointer->pCursor->bits->xhot;
+    int y = pPointer->y - pPointer->pCursor->bits->yhot;
+    BoxRec cursorRect;
 
-    DEBUG("CopyGC");
+    cursorRect.x1 = x;
+    cursorRect.y1 = y;
+    cursorRect.x2 = x + pPointer->pCursor->bits->width;
+    cursorRect.y2 = y + pPointer->pCursor->bits->height;
 
-    unwrap (pGCPriv, pGCDst, funcs);
-    (*pGCDst->funcs->CopyGC) (pGCSrc, mask, pGCDst);
-    wrap (pGCPriv, pGCDst, funcs, &V4L2GCfuncs);
-}
+    for (i = 0; i < numRegions; i++) {
+        if (regions[i].clip &&
+                RegionContainsRect(regions[i].clip, &cursorRect)) {
+            /* cursor at least partially intersects:
+             */
+            RegionPtr limits = RegionCreate(&cursorRect, 1);
+            RegionIntersect(limits, limits, regions[i].clip);
 
-static void
-V4L2DestroyGC(GCPtr pGC)
-{
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
+            V4L2ShadowBlitRegions(pScreen, pBuf, limits, pPointer);
 
-    DEBUG("DestroyGC");
-
-    unwrap (pGCPriv, pGC, funcs);
-    (*pGC->funcs->DestroyGC)(pGC);
-    wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
-}
-
-static void
-V4L2ChangeClip (GCPtr pGC, int type, pointer pvalue, int nrects)
-{
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
-
-    DEBUG("ChangeClip");
-
-    unwrap (pGCPriv, pGC, funcs);
-    (*pGC->funcs->ChangeClip) (pGC, type, pvalue, nrects);
-    wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
-}
-
-static void
-V4L2DestroyClip(GCPtr pGC)
-{
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
-
-    DEBUG("DestroyClip");
-
-    unwrap (pGCPriv, pGC, funcs);
-    (*pGC->funcs->DestroyClip)(pGC);
-    wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
-}
-
-static void
-V4L2CopyClip(GCPtr pgcDst, GCPtr pgcSrc)
-{
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pgcDst->devPrivates, GCPrivateKey);
-
-    DEBUG("CopyClip");
-
-    unwrap (pGCPriv, pgcDst, funcs);
-    (*pgcDst->funcs->CopyClip)(pgcDst, pgcSrc);
-    wrap (pGCPriv, pgcDst, funcs, &V4L2GCfuncs);
-}
-
-/* ---------------------------------------------------------------------- */
-/* Screen funcs */
-
-static Bool
-V4L2CreateGC(GCPtr pGC)
-{
-    ScreenPtr pScreen = pGC->pScreen;
-    ScreenPrivPtr pScreenPriv = dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey);
-    GCPrivPtr pGCPriv = dixLookupPrivate(&pGC->devPrivates, GCPrivateKey);
-    Bool ret;
-
-    DEBUG("CreateGC");
-
-    unwrap (pScreenPriv, pScreen, CreateGC);
-    if((ret = (*pScreen->CreateGC) (pGC)) &&
-            (pGC->funcs->ChangeGC != V4L2ChangeGC)) {
-        DEBUG("override ChangeGC..");
-        wrap (pGCPriv, pGC, funcs, &V4L2GCfuncs);
+            RegionUninit(limits);
+        }
     }
-    wrap(pScreenPriv, pScreen, CreateGC, V4L2CreateGC);
+}
 
-    return ret;
+static void
+V4L2ShadowUpdatePacked(ScreenPtr pScreen, shadowBufPtr pBuf)
+{
+    int i;
+    RegionPtr damage = DamageRegion(pBuf->pDamage);
+    RegionPtr tofree = NULL;
+    DeviceIntPtr pDev;
+
+    if (UNLIKELY (activeClips > 0)) {
+        /* subtract active regions from damaged regions so they aren't
+         * blit to screen:
+         */
+        for (i = 0; i < numRegions; i++) {
+            if (regions[i].clip && regions[i].updated) {
+                if (!tofree) {
+                    tofree = RegionCreate(NULL, 0);
+                }
+                RegionSubtract(tofree, damage, regions[i].clip);
+                damage = tofree;
+            }
+        }
+    }
+
+    /* blit non-video damaged areas to screen:
+     */
+    V4L2ShadowBlitRegions(pScreen, pBuf, damage, opSolid);
+
+    if (UNLIKELY (activeClips > 0)) {
+        /* fill updated video regions with transparent pixels:
+         */
+        for (i = 0; i < numRegions; i++) {
+            if (regions[i].clip && regions[i].updated) {
+                V4L2ShadowBlitRegions(pScreen, pBuf, regions[i].clip, opTransparent);
+// XXX workaround.. we need to be able to restore under old cursor..
+//                regions[i].updated = FALSE;
+            }
+        }
+
+        if (tofree) {
+            RegionUninit(tofree);
+        }
+
+        /* handle any cursors that are over an active region:
+         */
+        for(pDev = inputInfo.devices; pDev; pDev = pDev->next) {
+            miPointerPtr pPointer;
+            if (DevHasCursor(pDev) && (pPointer = MIPOINTER(pDev)) &&
+                    (pPointer->pScreen == pScreen) &&
+                    pPointer->pCursor && pPointer->pCursor->bits) {
+                V4L2DrawCursor(pScreen, pBuf, pPointer);
+            }
+        }
+    }
+}
+
+/**
+ * overload shadow update fxn and handle alpha pixels inline with copy to
+ * framebuffer
+ */
+shadowUpdateProc
+shadowUpdatePackedWeak(void)
+{
+    return V4L2ShadowUpdatePacked;
 }
 
 static Bool
 V4L2SetupScreen(ScreenPtr pScreen)
 {
-    ScreenPrivPtr pScreenPriv = dixLookupPrivate(&pScreen->devPrivates, ScreenPrivateKey);
     int fd;
 
-    DEBUG("SetupScreen, pScreenPriv=%p", pScreenPriv);
-
-    wrap (pScreenPriv, pScreen, CreateGC, V4L2CreateGC);
+    DEBUG("SetupScreen, pScreen=%p", pScreen);
 
     /* configure the corresponding framebuffer for ARGB: */
     fd = fbdevHWGetFD(xf86Screens[pScreen->myNum]);
@@ -243,24 +299,32 @@ V4L2SetupScreen(ScreenPtr pScreen)
     return TRUE;
 }
 
+/**
+ * Setup alpha blending for a new port.
+ */
 void
-V4L2SetupAlpha(void)
+V4L2SetupAlpha(PortPrivPtr pPPriv)
 {
-    static int initialized = FALSE;
-    int i;
+    if (!alpha) {
+        int i;
 
-    if (initialized) {
-        return;
+        for (i = 0; i < screenInfo.numScreens; i++) {
+            V4L2SetupScreen(screenInfo.screens[i]);
+        }
+
+        alpha = TRUE;
     }
 
-    dixRegisterPrivateKey(ScreenPrivateKey, PRIVATE_SCREEN, sizeof(ScreenPrivRec));
-    dixRegisterPrivateKey(GCPrivateKey, PRIVATE_GC, sizeof(GCPrivRec));
+    if (pPPriv->nr >= numRegions) {
+        /* grow array of per-port info */
+        regions = realloc(regions, sizeof(regions[0]) * (pPPriv->nr + 1));
 
-    for (i = 0; i < screenInfo.numScreens; i++) {
-        V4L2SetupScreen(screenInfo.screens[i]);
+        while (numRegions <= pPPriv->nr) {
+            regions[numRegions].clip = NULL;
+            regions[numRegions].updated = FALSE;
+            numRegions++;
+        }
     }
-
-    initialized = TRUE;
 }
 
 /**
@@ -268,7 +332,37 @@ V4L2SetupAlpha(void)
  * pixels with alpha enabled.
  */
 void
-V4L2EnableAlpha(Bool b)
+V4L2SetClip(PortPrivPtr pPPriv, DrawablePtr pDraw, RegionPtr clipBoxes)
 {
-    enable_alpha = b;
+    if (alpha) {
+        V4L2ClearClip(pPPriv);
+
+        DEBUG("Xv/SC: %d", pPPriv->nr);
+
+        regions[pPPriv->nr].clip = RegionCreate(NULL, 0);
+        RegionCopy(regions[pPPriv->nr].clip, clipBoxes);
+        regions[pPPriv->nr].updated = TRUE;
+        activeClips++;
+
+        /* we don't actually have to fill the color key.. just register it as
+         * dirty so that our shadow-update function gets run
+         */
+        DamageRegionAppend(pDraw, clipBoxes);
+    } else {
+        xf86XVFillKeyHelper(pDraw->pScreen, pPPriv->colorKey, clipBoxes);
+    }
+}
+
+void
+V4L2ClearClip(PortPrivPtr pPPriv)
+{
+    if (alpha) {
+        DEBUG("Xv/CC: %d", pPPriv->nr);
+
+        if (regions[pPPriv->nr].clip) {
+            RegionUninit(regions[pPPriv->nr].clip);
+            regions[pPPriv->nr].clip = NULL;
+            activeClips--;
+        }
+    }
 }

@@ -168,28 +168,6 @@ v4l2Setup(pointer module, pointer opts, int *errmaj, int *errmin)
 
 #endif
 
-typedef struct _PortPrivRec {
-    ScrnInfoPtr                 pScrn;
-
-    /* file handle */
-    int 			nr;
-
-    XF86VideoEncodingPtr        enc;
-    int                         *input;
-    int                         *norm;
-    int                         nenc,cenc;
-
-    /* yuv to offscreen */
-    XF86OffscreenImagePtr       format;   /* list */
-    int                         nformat;  /* # if list entries */
-    XF86OffscreenImagePtr       myfmt;    /* which one is YUY2 (packed) */
-    int                         yuv_format;
-
-    /* colorkey */
-    CARD32                      colorKey;
-
-} PortPrivRec, *PortPrivPtr;
-
 #define XV_ENCODING	"XV_ENCODING"
 #define XV_BRIGHTNESS  	"XV_BRIGHTNESS"
 #define XV_CONTRAST 	"XV_CONTRAST"
@@ -273,7 +251,7 @@ V4L2SetupDevice(PortPrivPtr pPPriv, ScrnInfoPtr pScrn)
             xf86Msg(X_INFO, "v4l2: enabling local-alpha for %s\n", V4L2_NAME);
             fbuf.flags |= V4L2_FBUF_FLAG_LOCAL_ALPHA;
             pPPriv->colorKey = 0xff000000;
-            V4L2SetupAlpha();
+            V4L2SetupAlpha(pPPriv);
         } else {
             xf86Msg(X_INFO, "v4l2: enabling chromakey for %s\n", V4L2_NAME);
             fbuf.flags |= V4L2_FBUF_FLAG_CHROMAKEY;
@@ -384,9 +362,7 @@ V4L2UpdateOverlay(PortPrivPtr pPPriv, ScrnInfoPtr pScrn,
         perror("ioctl VIDIOC_S_FMT");
     }
 
-    V4L2EnableAlpha(TRUE);
-    xf86XVFillKeyHelper(pDraw->pScreen, pPPriv->colorKey, clipBoxes);
-    V4L2EnableAlpha(FALSE);
+    V4L2SetClip(pPPriv, pDraw, clipBoxes);
 
     return Success;
 }
@@ -446,6 +422,8 @@ V4L2StopVideo(ScrnInfoPtr pScrn, pointer data, Bool shutdown)
     PortPrivPtr pPPriv = (PortPrivPtr) data;
 
     DEBUG("Xv/StopVideo shutdown=%d",shutdown);
+
+    V4L2ClearClip(pPPriv);
 
     if (shutdown) {
         V4L2CloseDevice(pPPriv, pScrn);
