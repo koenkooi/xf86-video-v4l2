@@ -77,7 +77,11 @@ static int activeClips = 0;
 #define DevHasCursor(pDev) \
     ((pDev)->spriteInfo && (pDev)->spriteInfo->spriteOwner)
 
+#define SPRITE_PAD  8
+
 static const void *opTransparent=(void *)1, *opSolid=(void *)3;
+
+static RegionPtr cursorRegion;
 
 static inline void
 V4L2ShadowBlitTransparentARGB32(void *winBase, int winStride, int w, int h)
@@ -194,12 +198,31 @@ V4L2DrawCursor(ScreenPtr pScreen, shadowBufPtr pBuf, miPointerPtr pPointer)
                 RegionContainsRect(regions[i].clip, &cursorRect)) {
             /* cursor at least partially intersects:
              */
-            RegionPtr limits = RegionCreate(&cursorRect, 1);
-            RegionIntersect(limits, limits, regions[i].clip);
+            RegionPtr bounds, paddedBounds;
 
-            V4L2ShadowBlitRegions(pScreen, pBuf, limits, pPointer);
+            bounds = RegionCreate(&cursorRect, 1);
+            RegionIntersect(bounds, bounds, regions[i].clip);
 
-            RegionUninit(limits);
+            /* we have to first clear the padded bounds (or at least what is
+             * in the padded bounds but not in the actual cursor bounds to
+             * compensate for the for the software cursor/spite code which
+             * saves/restores a slightly larger area and messes up our nice
+             * transparent pixels (see miSpriteComputeSaved() in misprite.c)
+             */
+            cursorRect.x1 -= SPRITE_PAD;
+            cursorRect.y1 -= SPRITE_PAD;
+            cursorRect.x2 += 2 * SPRITE_PAD;
+            cursorRect.y2 += 2 * SPRITE_PAD;
+            paddedBounds = RegionCreate(&cursorRect, 1);
+            RegionIntersect(paddedBounds, paddedBounds, regions[i].clip);
+
+            V4L2ShadowBlitRegions(pScreen, pBuf, paddedBounds, opTransparent);
+            V4L2ShadowBlitRegions(pScreen, pBuf, bounds, pPointer);
+
+            RegionUnion(cursorRegion, cursorRegion, paddedBounds);
+
+            RegionUninit(bounds);
+            RegionUninit(paddedBounds);
         }
     }
 }
@@ -232,13 +255,17 @@ V4L2ShadowUpdatePacked(ScreenPtr pScreen, shadowBufPtr pBuf)
     V4L2ShadowBlitRegions(pScreen, pBuf, damage, opSolid);
 
     if (UNLIKELY (activeClips > 0)) {
+        Bool overlap;
+        RegionPtr prevCursorRegion = cursorRegion;
+
+        cursorRegion = RegionCreate(NULL, 0);
+
         /* fill updated video regions with transparent pixels:
          */
         for (i = 0; i < numRegions; i++) {
             if (regions[i].clip && regions[i].updated) {
                 V4L2ShadowBlitRegions(pScreen, pBuf, regions[i].clip, opTransparent);
-// XXX workaround.. we need to be able to restore under old cursor..
-//                regions[i].updated = FALSE;
+                regions[i].updated = FALSE;
             }
         }
 
@@ -255,6 +282,28 @@ V4L2ShadowUpdatePacked(ScreenPtr pScreen, shadowBufPtr pBuf)
                     pPointer->pCursor && pPointer->pCursor->bits) {
                 V4L2DrawCursor(pScreen, pBuf, pPointer);
             }
+        }
+
+        if (prevCursorRegion) {
+            /* subtract current cursor region:
+             */
+            RegionSubtract(prevCursorRegion, prevCursorRegion, cursorRegion);
+
+            /* clip prevCursorRegion to current video regions:
+             */
+            for (i = 0; i < numRegions; i++) {
+                if (regions[i].clip) {
+                    RegionIntersect(prevCursorRegion,
+                            prevCursorRegion, regions[i].clip);
+                }
+            }
+
+            /* fill what remains with transparent pixels to clean up after
+             * previous cursor:
+             */
+            V4L2ShadowBlitRegions(pScreen, pBuf, prevCursorRegion, opTransparent);
+
+            RegionUninit(prevCursorRegion);
         }
     }
 }
