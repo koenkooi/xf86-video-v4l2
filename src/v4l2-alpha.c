@@ -69,6 +69,7 @@ static int activeClips = 0;
  * framebuffer to framebuffer.
  */
 
+#define WEAK __attribute__((weak))
 #define LIKELY(x)      __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
@@ -83,7 +84,7 @@ static const void *opTransparent=(void *)1, *opSolid=(void *)3;
 
 static RegionPtr cursorRegion;
 
-static inline void
+WEAK void
 V4L2ShadowBlitTransparentARGB32(void *winBase, int winStride, int w, int h)
 {
     while (h--) {
@@ -92,7 +93,7 @@ V4L2ShadowBlitTransparentARGB32(void *winBase, int winStride, int w, int h)
     }
 }
 
-static inline void
+WEAK void
 V4L2ShadowBlitSolidARGB32(void *winBase, int winStride,
         void *shaBase, int shaStride, int w, int h)
 {
